@@ -16,6 +16,35 @@ import (
 	"go.uber.org/zap"
 )
 
+// Add user permission checks here
+func checkUserPermissions(ctx *tgbot.Context, user *tgbotapi.User) error {
+	err := checkBotIsAdmin(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !lo.Contains([]telegram.ChatType{telegram.ChatTypeGroup, telegram.ChatTypeSuperGroup}, telegram.ChatType(ctx.Update.FromChat().Type)) {
+		return fmt.Errorf("%w，%s", errOperationCanNotBeDone, "此功能只有<b>群组</b>和<b>超级群组</b>的管理员可以使用。")
+	}
+
+	if user == nil {
+		return fmt.Errorf("%s，只有%w角色可以进行此操作", errOperationCanNotBeDone, errAdministratorPermissionRequired)
+	}
+
+	is, err := ctx.IsUserMemberStatus(user.ID, []telegram.MemberStatus{
+		telegram.MemberStatusCreator,
+		telegram.MemberStatusAdministrator,
+	})
+	if err != nil {
+		return err
+	}
+	if !is && !ctx.Bot.IsGroupAnonymousBot(user) {
+		return fmt.Errorf("%s，%w", errOperationCanNotBeDone, errToggleRecapPermissionDeniedDueToAdministratorIsRequired)
+	}
+
+	return nil
+}
+
 func newRecapSelectHoursInlineKeyboardButtons(ctx *tgbot.Context, chatID int64, chatTitle string, recapMode tgchat.AutoRecapSendMode) (tgbotapi.InlineKeyboardMarkup, error) {
 	buttons := make([]tgbotapi.InlineKeyboardButton, 0, len(RecapSelectHourAvailable))
 
@@ -51,6 +80,12 @@ func (h *CommandHandler) handleRecapCommand(c *tgbot.Context) (tgbot.Response, e
 
 	chatID := c.Update.Message.Chat.ID
 	chatTitle := c.Update.Message.Chat.Title
+
+	// Add user permission check
+	err := checkUserPermissions(c, c.Update.Message.From)
+	if err != nil {
+		return nil, tgbot.NewMessageError(err.Error()).WithReply(c.Update.Message).WithParseModeHTML()
+	}
 
 	has, err := h.tgchats.HasChatHistoriesRecapEnabledForGroups(chatID, chatTitle)
 	if err != nil {
